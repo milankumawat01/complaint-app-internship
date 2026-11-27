@@ -69,4 +69,41 @@ export const adminsHandlers = [
   http.post(`${BASE}/admin/admins/:id/reset-password`, () =>
     HttpResponse.json({ ok: true }),
   ),
+
+ http.get(`${BASE}/admin/me`, () =>
+  HttpResponse.json({
+    id: 1,
+    name: "Ravi Admin",
+    email: "ravi@example.com",
+    role: "admin",
+    is_active: true,
+    created_at: "2026-11-26T09:00:00Z",
+  }),
+),
+
+http.get(`${BASE}/admin/settings`, () =>
+  HttpResponse.json({
+    gps_mandatory: true,
+    complaint_number_start: 1000,
+    morning_shift_start: "06:00",
+    morning_shift_end: "14:00",
+    night_shift_start: "22:00",
+    night_shift_end: "06:00",
+    auto_accept_material_requests: false,
+  }),
+),
+
+http.patch(`${BASE}/admin/settings`, async ({ request }) =>
+  HttpResponse.json(await request.json()),
+),
+
+http.get(`${BASE}/admin/audit-log`, ({ request }) => {
+  const url = new URL(request.url);
+  return HttpResponse.json({
+    items: [],
+    total: 0,
+    page: Number(url.searchParams.get("page") ?? 1),
+    page_size: Number(url.searchParams.get("page_size") ?? 20),
+  });
+}),
 ];
