@@ -3,7 +3,34 @@ import { http, HttpResponse } from "msw";
 
 const BASE = `${import.meta.env.VITE_API_URL}/api/v1`;
 
-const executions = [
+type Execution = {
+  id: number;
+  assignment: Record<string, unknown>;
+  staff?: { id: number; name: string };
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  images: {
+    id: number;
+    type: string;
+    url: string;
+    latitude: number;
+    longitude: number;
+    distance_m: number;
+    created_at?: string;
+  }[];
+  ai: Record<string, unknown> | null;
+};
+
+type AiRule = {
+  id: number;
+  name: string;
+  min_score: number;
+  max_score: number;
+  action: string;
+};
+
+const executions: Execution[] = [
   {
     id: 500,
     assignment: {
@@ -43,7 +70,7 @@ const executions = [
   },
 ];
 
-const aiRules = [
+const aiRules: AiRule[] = [
   {
     id: 2,
     name: "Needs review",
@@ -53,156 +80,252 @@ const aiRules = [
   },
 ];
 
-const pageResponse = (items: unknown[], request: Request) => {
+let nextExecutionId = 501;
+let nextImageId = 902;
+let nextRuleId = 3;
+
+const pageResponse = <T,>(items: T[], request: Request) => {
   const url = new URL(request.url);
-  const page = Number(url.searchParams.get("page") ?? 1);
-  const size = Number(url.searchParams.get("page_size") ?? 20);
+  const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number(url.searchParams.get("page_size") ?? 20)),
+  );
 
   return {
-    items: items.slice((page - 1) * size, page * size),
+    items: items.slice((page - 1) * pageSize, page * pageSize),
     total: items.length,
     page,
-    page_size: size,
+    page_size: pageSize,
   };
 };
 
+const executionNotFound = () =>
+  HttpResponse.json(
+    { detail: "Execution not found" },
+    { status: 404 },
+  );
+
 export const executionsHandlers = [
+  // Staff start task execution
   http.post(`${BASE}/staff/task-executions/start`, async ({ request }) => {
-    const body = (await request.json()) as { assignment_id: number };
+    const body = (await request.json()) as {
+      assignment_id: number;
+    };
 
-    return HttpResponse.json(
-      {
-        id: 501,
-        assignment: { id: body.assignment_id },
-        status: "IN_PROGRESS",
-        started_at: new Date().toISOString(),
-        images: [],
-        ai: null,
-      },
-      { status: 201 },
+    const existing = executions.find(
+      (item) =>
+        Number(item.assignment.id) === body.assignment_id &&
+        item.status === "IN_PROGRESS",
     );
+
+    if (existing) {
+      return HttpResponse.json(
+        { detail: "Execution already started" },
+        { status: 409 },
+      );
+    }
+
+    const item: Execution = {
+      id: nextExecutionId++,
+      assignment: { id: body.assignment_id },
+      status: "IN_PROGRESS",
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      images: [],
+      ai: null,
+    };
+
+    executions.push(item);
+    return HttpResponse.json(item, { status: 201 });
   }),
 
-  http.post(`${BASE}/staff/task-executions/:id/images`, () =>
-    HttpResponse.json(
-      {
-        id: 902,
-        type: "BEFORE",
-        url: "/api/v1/files/mock-image.jpg",
-        latitude: 26.9125,
-        longitude: 75.7871,
-        distance_m: 18,
-        created_at: new Date().toISOString(),
-      },
-      { status: 201 },
-    ),
-  ),
+  // Staff upload execution image
+  http.post(`${BASE}/staff/task-executions/:id/images`, async ({ params, request }) => {
+    const execution = executions.find(
+      (item) => item.id === Number(params.id),
+    );
 
+    if (!execution) return executionNotFound();
+
+    if (execution.status !== "IN_PROGRESS") {
+      return HttpResponse.json(
+        { detail: "Execution is not in progress" },
+        { status: 409 },
+      );
+    }
+
+    const formData = await request.formData();
+    const type = String(formData.get("type") ?? "BEFORE");
+
+    const image = {
+      id: nextImageId++,
+      type,
+      url: `/api/v1/files/mock-image-${nextImageId}.jpg`,
+      latitude: Number(formData.get("latitude") ?? 26.9125),
+      longitude: Number(formData.get("longitude") ?? 75.7871),
+      distance_m: 18,
+      created_at: new Date().toISOString(),
+    };
+
+    execution.images.push(image);
+    return HttpResponse.json(image, { status: 201 });
+  }),
+
+  // Staff complete execution
   http.post(`${BASE}/staff/task-executions/:id/complete`, ({ params }) => {
-    const item = executions.find(
-      (execution) => execution.id === Number(params.id),
+    const execution = executions.find(
+      (item) => item.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json({
-          ...item,
-          status: "PENDING",
-          ai: { status: "PENDING" },
-        })
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    if (!execution) return executionNotFound();
+
+    if (execution.status !== "IN_PROGRESS") {
+      return HttpResponse.json(
+        { detail: "Execution is not in progress" },
+        { status: 409 },
+      );
+    }
+
+    execution.status = "PENDING";
+    execution.completed_at = new Date().toISOString();
+    execution.ai = { status: "PENDING" };
+
+    return HttpResponse.json(execution);
   }),
 
+  // Staff execution details
   http.get(`${BASE}/staff/task-executions/:id`, ({ params }) => {
     const item = executions.find(
       (execution) => execution.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json(item)
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    return item ? HttpResponse.json(item) : executionNotFound();
   }),
 
+  // AI score rules list
   http.get(`${BASE}/admin/ai-score-rules`, () =>
     HttpResponse.json(aiRules),
   ),
 
+  // Create AI score rule
   http.post(`${BASE}/admin/ai-score-rules`, async ({ request }) => {
-    const body = (await request.json()) as Record<string, unknown>;
-    return HttpResponse.json({ id: 3, ...body }, { status: 201 });
+    const body = (await request.json()) as Omit<AiRule, "id">;
+
+    const item: AiRule = {
+      id: nextRuleId++,
+      ...body,
+    };
+
+    aiRules.push(item);
+    return HttpResponse.json(item, { status: 201 });
   }),
 
+  // Update AI score rule
   http.patch(`${BASE}/admin/ai-score-rules/:id`, async ({ params, request }) => {
-    const body = (await request.json()) as Record<string, unknown>;
-    return HttpResponse.json({ id: Number(params.id), ...body });
+    const body = (await request.json()) as Partial<AiRule>;
+    const item = aiRules.find(
+      (rule) => rule.id === Number(params.id),
+    );
+
+    if (!item) {
+      return HttpResponse.json(
+        { detail: "AI rule not found" },
+        { status: 404 },
+      );
+    }
+
+    Object.assign(item, body);
+    return HttpResponse.json(item);
   }),
 
-  http.delete(`${BASE}/admin/ai-score-rules/:id`, () =>
-    new HttpResponse(null, { status: 204 }),
-  ),
+  // Delete AI score rule
+  http.delete(`${BASE}/admin/ai-score-rules/:id`, ({ params }) => {
+    const index = aiRules.findIndex(
+      (rule) => rule.id === Number(params.id),
+    );
 
-  http.get(`${BASE}/admin/task-executions`, ({ request }) =>
-    HttpResponse.json(pageResponse(executions, request)),
-  ),
+    if (index === -1) {
+      return HttpResponse.json(
+        { detail: "AI rule not found" },
+        { status: 404 },
+      );
+    }
 
+    aiRules.splice(index, 1);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Admin execution list
+  http.get(`${BASE}/admin/task-executions`, ({ request }) => {
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    const staffId = url.searchParams.get("staff_id");
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+
+    const filtered = executions.filter((item) => {
+      const date = String(item.assignment.date ?? "");
+
+      return (
+        (!status || item.status === status) &&
+        (!staffId || item.staff?.id === Number(staffId)) &&
+        (!from || date >= from) &&
+        (!to || date <= to)
+      );
+    });
+
+    return HttpResponse.json(pageResponse(filtered, request));
+  }),
+
+  // Admin execution details
   http.get(`${BASE}/admin/task-executions/:id`, ({ params }) => {
     const item = executions.find(
       (execution) => execution.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json(item)
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    return item ? HttpResponse.json(item) : executionNotFound();
   }),
 
+  // Admin approve execution
   http.post(`${BASE}/admin/task-executions/:id/approve`, ({ params }) => {
     const item = executions.find(
       (execution) => execution.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json({ ...item, status: "COMPLETED" })
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    if (!item) return executionNotFound();
+
+    item.status = "COMPLETED";
+    return HttpResponse.json(item);
   }),
 
+  // Admin reopen execution
   http.post(`${BASE}/admin/task-executions/:id/reopen`, async ({ params, request }) => {
     const body = (await request.json()) as { reason: string };
     const item = executions.find(
       (execution) => execution.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json({ ...item, status: "REJECTED", ...body })
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    if (!item) return executionNotFound();
+
+    item.status = "REJECTED";
+    item.ai = {
+      ...(item.ai ?? {}),
+      reopen_reason: body.reason,
+    };
+
+    return HttpResponse.json(item);
   }),
 
+  // Admin rescore execution
   http.post(`${BASE}/admin/task-executions/:id/rescore`, ({ params }) => {
     const item = executions.find(
       (execution) => execution.id === Number(params.id),
     );
 
-    return item
-      ? HttpResponse.json({
-          ...item,
-          ai: { status: "PENDING" },
-        })
-      : HttpResponse.json(
-          { detail: "Execution not found" },
-          { status: 404 },
-        );
+    if (!item) return executionNotFound();
+
+    item.ai = { status: "PENDING" };
+    return HttpResponse.json(item);
   }),
 ];

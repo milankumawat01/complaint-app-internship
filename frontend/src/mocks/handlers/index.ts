@@ -7,6 +7,7 @@ import { executionsHandlers } from "./executions";
 import { inventoryHandlers } from "./inventory";
 import { notificationsHandlers } from "./notifications";
 import { dashboardsHandlers } from "./dashboards";
+import { formsHandlers } from "./forms";
 import { tasksHandlers } from "./tasks";
 
 
@@ -21,4 +22,5 @@ export const handlers = [
   ...inventoryHandlers,
   ...notificationsHandlers,
   ...dashboardsHandlers,
+  ...formsHandlers,
 ];
