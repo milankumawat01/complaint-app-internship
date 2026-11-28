@@ -97,10 +97,7 @@ const getPageResponse = <T,>(data: T[], request: Request) => {
   );
 
   return {
-    items: data.slice(
-      (page - 1) * pageSize,
-      page * pageSize,
-    ),
+    items: data.slice((page - 1) * pageSize, page * pageSize),
     total: data.length,
     page,
     page_size: pageSize,
@@ -115,6 +112,15 @@ export const adminsHandlers = [
 
   // 10. Get Admin List
   http.get(`${BASE}/admin/admins`, ({ request }) => {
+    const token = request.headers.get("Authorization");
+
+    if (token === "Bearer expired-token") {
+      return HttpResponse.json(
+        { detail: "Token expired" },
+        { status: 401 },
+      );
+    }
+
     const url = new URL(request.url);
     const search = url.searchParams.get("search")?.toLowerCase() ?? "";
 
